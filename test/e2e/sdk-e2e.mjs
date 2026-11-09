@@ -279,6 +279,9 @@ try {
       `            maxTokens: 4096`,
       `- id: key-pool`,
       `  config:`,
+      `    defaultModel:`,
+      `      provider: ${PROVIDER}`,
+      `      model: ${MODEL}`,
       `    pools:`,
       `      ${PROVIDER}:`,
       `        apiKeyEnv: ${ACTIVE_REF}`,
@@ -318,6 +321,13 @@ try {
 
   const credentials = await readFile(credentialsPath, 'utf8')
   assert.match(credentials, new RegExp(`^\\s*${ACTIVE_REF}:\\s*${KEY_2}\\s*$`, 'm'))
+
+  // The optional defaultModel config is applied through DSH's own
+  // agent-default-model service, which persists the profile override.
+  const profilePatch = await readFile(join(profileDir, 'cordis.patch.yml'), 'utf8')
+  assert.match(profilePatch, /id: agent-default-model/)
+  assert.match(profilePatch, new RegExp(`provider:\\s*${PROVIDER}`))
+  assert.match(profilePatch, new RegExp(`model:\\s*${MODEL}`))
 
   const assistantText = runtime.frames
     .filter((frame) => frame.method === 'session.event')

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { apply } from '../src/index.js'
+import { apply, applyDefaultModel } from '../src/index.js'
 
 function credentials(initial) {
   const values = new Map(Object.entries(initial))
@@ -21,9 +21,10 @@ function credentials(initial) {
   }
 }
 
-function context(creds) {
+function context(creds, services = {}) {
   const listeners = new Map()
   const logs = []
+  const disposers = []
   const ctx = {
     logger: {
       info(message) {
@@ -38,7 +39,7 @@ function context(creds) {
     },
     logs,
     get(name) {
-      return name === 'credentials' ? creds : undefined
+      return name === 'credentials' ? creds : services[name]
     },
     on(event, listener) {
       const list = listeners.get(event) ?? []
@@ -63,8 +64,47 @@ function context(creds) {
       }
       return next()
     },
+    inject(names, callback) {
+      callback(ctx)
+    },
+    effect(callback) {
+      const dispose = callback()
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return dispose
+    },
+    dispose() {
+      for (const dispose of disposers.splice(0)) dispose()
+    },
   }
   return ctx
+}
+
+function defaultModelServices({ current, saveFails = false, resolveFails = false } = {}) {
+  const saved = []
+  const resolved = []
+  return {
+    saved,
+    resolved,
+    services: {
+      agentDefaultModel: {
+        currentSelection() {
+          return current
+        },
+        async saveSelection(selection) {
+          if (saveFails) throw new Error('save failed')
+          saved.push(selection)
+        },
+      },
+      configEditor: {},
+      llm: {
+        async resolveCallConfig(selection) {
+          if (resolveFails) throw new Error('no such route')
+          resolved.push(selection)
+          return selection
+        },
+      },
+    },
+  }
 }
 
 function poolConfig(overrides = {}) {
@@ -266,4 +306,106 @@ test('the provider retry-after delay is honored and capped', async () => {
   )
   assert.deepEqual(action, { kind: 'retry' })
   assert.ok(Date.now() - started >= 25, 'the provider retry-after delay should be awaited')
+})
+test('the configured default model is saved when it differs from the current one', async () => {
+  const { services, saved, resolved } = defaultModelServices({
+    current: { provider: 'deepseek-official', model: 'deepseek-flash' },
+  })
+  const ctx = context(credentials({}), services)
+  const target = { provider: 'mn-shared1', model: 'deepseek-v4.1-flash' }
+
+  const outcome = await applyDefaultModel(ctx, target)
+
+  assert.deepEqual(outcome, { applied: true })
+  assert.deepEqual(resolved, [target])
+  assert.deepEqual(saved, [target])
+  assert.match(ctx.logs.at(-1)[1], /DSH default model for new sessions is now provider "mn-shared1"/)
+})
+
+test('an unchanged default model is not saved again', async () => {
+  const current = { provider: 'mn-shared1', model: 'deepseek-v4.1-flash' }
+  const { services, saved } = defaultModelServices({ current })
+  const ctx = context(credentials({}), services)
+
+  const outcome = await applyDefaultModel(ctx, { ...current })
+
+  assert.deepEqual(outcome, { applied: false, reason: 'unchanged' })
+  assert.equal(saved.length, 0)
+})
+
+test('a reasoning-effort difference counts as a different default', async () => {
+  const { services, saved } = defaultModelServices({
+    current: { provider: 'p', model: 'm', reasoningEffort: 'low' },
+  })
+  const ctx = context(credentials({}), services)
+  const outcome = await applyDefaultModel(ctx, { provider: 'p', model: 'm', reasoningEffort: 'high' })
+  assert.deepEqual(outcome, { applied: true })
+  assert.deepEqual(saved, [{ provider: 'p', model: 'm', reasoningEffort: 'high' }])
+})
+
+test('a missing agent-default-model service leaves DSH\'s default unchanged', async () => {
+  const ctx = context(credentials({}))
+  const outcome = await applyDefaultModel(ctx, { provider: 'p', model: 'm' })
+  assert.deepEqual(outcome, { applied: false, reason: 'service-unavailable' })
+  assert.match(ctx.logs.at(-1)[1], /agent-default-model service is unavailable/)
+})
+
+test('a missing configuration editor leaves DSH\'s default unchanged', async () => {
+  const { services } = defaultModelServices()
+  delete services.configEditor
+  const ctx = context(credentials({}), services)
+  const outcome = await applyDefaultModel(ctx, { provider: 'p', model: 'm' })
+  assert.deepEqual(outcome, { applied: false, reason: 'editor-unavailable' })
+  assert.match(ctx.logs.at(-1)[1], /no configuration editor is mounted/)
+})
+
+test('an unresolvable default route is not saved', async () => {
+  const { services, saved } = defaultModelServices({ resolveFails: true })
+  const ctx = context(credentials({}), services)
+  const outcome = await applyDefaultModel(ctx, { provider: 'missing', model: 'nope' })
+  assert.deepEqual(outcome, { applied: false, reason: 'unresolved' })
+  assert.equal(saved.length, 0)
+  assert.match(ctx.logs.at(-1)[1], /cannot be resolved/)
+})
+
+test('a failing save propagates to the caller', async () => {
+  const { services } = defaultModelServices({ saveFails: true })
+  const ctx = context(credentials({}), services)
+  await assert.rejects(
+    applyDefaultModel(ctx, { provider: 'p', model: 'm' }),
+    /save failed/,
+  )
+})
+
+test('apply schedules the configured default model and warns about an unpooled provider', async () => {
+  const { services, saved } = defaultModelServices({
+    current: { provider: 'deepseek-official', model: 'deepseek-flash' },
+  })
+  const ctx = context(credentials({}), services)
+  apply(ctx, {
+    pools: {},
+    defaultModel: { provider: 'mn-shared1', model: 'deepseek-v4.1-flash' },
+  })
+
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  assert.equal(saved.length, 1)
+  assert.equal(saved[0].provider, 'mn-shared1')
+  assert.ok(
+    ctx.logs.some(([level, message]) => level === 'warn' && /has no key pool/.test(message)),
+    'an unpooled default provider should still be reported',
+  )
+})
+
+test('a disabled config schedules no default model work', async () => {
+  const { services, saved } = defaultModelServices()
+  const ctx = context(credentials({}), services)
+  apply(ctx, {
+    enabled: false,
+    pools: {},
+    defaultModel: { provider: 'p', model: 'm' },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(saved.length, 0)
+  assert.equal(ctx.listenerCount('agent/request-error'), 0)
 })

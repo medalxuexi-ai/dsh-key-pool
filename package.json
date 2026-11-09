@@ -2,7 +2,7 @@
   "name": "dsh-key-pool",
   "version": "0.1.0",
   "private": true,
-  "description": "DSH plugin: rotate a provider's API key through a configured key pool when the active key runs out of quota",
+  "description": "DSH plugin: rotate a provider's API key through a configured key pool when the active key runs out of quota, and optionally pin the default provider/model for new sessions",
   "type": "module",
   "main": "src/index.js",
   "exports": {

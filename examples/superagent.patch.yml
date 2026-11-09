@@ -1,7 +1,13 @@
 # Pools for the two provider routes already configured in this machine's
-# superagent profile. Merge this row into ~/.dsh/profiles/superagent/cordis.patch.yml.
+# superagent profile, plus the default provider/model for new DSH sessions.
+# Merge this row into ~/.dsh/profiles/superagent/cordis.patch.yml.
 - id: key-pool
   config:
+    # Optional: new sessions default to mn-shared1 / DeepSeek V4.1 Flash.
+    # Omit this block to leave DSH's own default model untouched.
+    defaultModel:
+      provider: mn-shared1
+      model: deepseek-v4.1-flash
     pools:
       mn-shared1:
         apiKeyEnv: MN_SHARED1_API_KEY

@@ -66,6 +66,53 @@ test('a one-key pool still allows one recovery attempt', () => {
   assert.equal(config.pools.get('p').maxRotationsPerStep, 1)
 })
 
+test('a default provider/model selection is parsed and optional', () => {
+  const configured = normalizeConfig({
+    defaultModel: { provider: 'mn-shared1', model: 'deepseek-v4.1-flash' },
+    pools: {},
+  })
+  assert.deepEqual(configured.defaultModel, {
+    provider: 'mn-shared1',
+    model: 'deepseek-v4.1-flash',
+  })
+
+  const withEffort = normalizeConfig({
+    defaultModel: {
+      provider: 'mn-shared1',
+      model: 'deepseek-v4.1-flash',
+      reasoningEffort: 'high',
+    },
+    pools: {},
+  })
+  assert.deepEqual(withEffort.defaultModel, {
+    provider: 'mn-shared1',
+    model: 'deepseek-v4.1-flash',
+    reasoningEffort: 'high',
+  })
+
+  assert.equal(normalizeConfig({ pools: {} }).defaultModel, undefined)
+})
+
+test('malformed default model configs fail loudly', () => {
+  const cases = [
+    [{ defaultModel: [] }, /defaultModel must be a mapping/],
+    [{ defaultModel: {} }, /defaultModel\.provider/],
+    [{ defaultModel: { provider: '' } }, /defaultModel\.provider/],
+    [{ defaultModel: { provider: 'p', model: '  ' } }, /defaultModel\.model/],
+    [
+      { defaultModel: { provider: 'p', model: 'm', thinking: 'high' } },
+      /defaultModel has unknown key "thinking"/,
+    ],
+    [
+      { defaultModel: { provider: 'p', model: 'm', reasoningEffort: '' } },
+      /defaultModel\.reasoningEffort/,
+    ],
+  ]
+  for (const [raw, expected] of cases) {
+    assert.throws(() => normalizeConfig(raw), expected)
+  }
+})
+
 test('malformed configs fail loudly', () => {
   const cases = [
     [{ floop: true }, /unknown config key "floop"/],

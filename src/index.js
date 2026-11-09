@@ -10,6 +10,10 @@
  * new key. Recovery is bounded per failed step so a fully exhausted pool ends
  * the turn instead of looping.
  *
+ * An optional `defaultModel` selection also makes the plugin the declarative
+ * source of DSH's default provider/model for new sessions (applied through the
+ * standard agent-default-model service, which persists the profile override).
+ *
  * @module dsh-key-pool
  */
 
@@ -28,7 +32,8 @@ export const name = 'key-pool'
 export const inject = ['credentials']
 
 /**
- * Activate the plugin: validate config and install the recovery listener.
+ * Activate the plugin: validate config, install the recovery listener, and
+ * apply the optional default model selection.
  *
  * @param ctx - owning Cordis context.
  * @param rawConfig - raw plugin config.
@@ -36,8 +41,89 @@ export const inject = ['credentials']
 export function apply(ctx, rawConfig) {
   const config = normalizeConfig(rawConfig)
   if (!config.enabled) return
+
   const state = createRotationState()
   ctx.on('agent/request-error', (payload, next) => recover(ctx, config, state, payload, next))
+
+  if (config.defaultModel === undefined) return
+  if (!config.pools.has(config.defaultModel.provider)) {
+    log(
+      ctx,
+      'warn',
+      `key-pool: default model provider "${config.defaultModel.provider}" has no key pool; its quota failures will not rotate keys`,
+    )
+  }
+  ctx.inject(['agentDefaultModel', 'configEditor', 'llm'], (child) => {
+    child.effect(() => {
+      // Apply after activation: the write reconciles the profile patch and
+      // awaits the loader, which must not be re-entered from our own apply().
+      const timer = setTimeout(() => {
+        void applyDefaultModel(child, config.defaultModel).catch((error) => {
+          log(ctx, 'warn', `key-pool: could not apply the configured default model: ${messageOf(error)}`)
+        })
+      }, 0)
+      return () => clearTimeout(timer)
+    })
+  })
+}
+
+/**
+ * Make the configured selection DSH's default provider/model for new sessions.
+ *
+ * The selection is validated against a live adapter route and then persisted
+ * through `agentDefaultModel.saveSelection()`, the same path the model picker
+ * uses. Existing sessions and dsh-superagent role-model selections are not
+ * touched. A no-op save is reported rather than treated as an error.
+ *
+ * @param ctx - context with `agentDefaultModel`, `configEditor`, and optionally `llm`.
+ * @param target - validated `{ provider, model, reasoningEffort? }`.
+ * @returns an outcome record for diagnostics and tests.
+ */
+export async function applyDefaultModel(ctx, target) {
+  const defaults = ctx.get('agentDefaultModel')
+  if (defaults === undefined) {
+    log(ctx, 'warn', 'key-pool: defaultModel is configured but the agent-default-model service is unavailable; leaving DSH\'s default unchanged')
+    return { applied: false, reason: 'service-unavailable' }
+  }
+  if (ctx.get('configEditor') === undefined) {
+    log(ctx, 'warn', 'key-pool: defaultModel is configured but no configuration editor is mounted; set the agent-default-model row manually')
+    return { applied: false, reason: 'editor-unavailable' }
+  }
+
+  const current = defaults.currentSelection()
+  if (sameSelection(current, target)) return { applied: false, reason: 'unchanged' }
+
+  const llm = ctx.get('llm')
+  if (llm !== undefined && typeof llm.resolveCallConfig === 'function') {
+    try {
+      await llm.resolveCallConfig(target)
+    } catch (error) {
+      log(
+        ctx,
+        'warn',
+        `key-pool: default model route "${target.provider}/${target.model}" cannot be resolved (${messageOf(error)}); leaving DSH's default unchanged`,
+      )
+      return { applied: false, reason: 'unresolved' }
+    }
+  }
+
+  await defaults.saveSelection({ ...target })
+  log(
+    ctx,
+    'info',
+    `key-pool: DSH default model for new sessions is now provider "${target.provider}" / model "${target.model}"`,
+  )
+  return { applied: true }
+}
+
+/** Compare two agent default selections, treating an absent effort as absent. */
+function sameSelection(current, target) {
+  if (current === undefined || current === null) return false
+  return (
+    current.provider === target.provider &&
+    current.model === target.model &&
+    (current.reasoningEffort ?? undefined) === (target.reasoningEffort ?? undefined)
+  )
 }
 
 /**

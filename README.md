@@ -4,6 +4,9 @@
 当当前 provider 的 **key 额度耗尽（或 key 失效 / 限流）** 时，自动从该 provider 的 key 池里
 切换到下一个 key，并让 agent 重试当前步骤，无需重启、无需改 provider 配置。
 
+它还提供可选的 `defaultModel` 配置：把 DSH 新会话的默认 provider/model 固定为指定值
+（例如当前的 `mn-shared1` / DeepSeek V4.1 Flash），之后改插件配置即可自定义。
+
 切换只发生在凭证层：插件把池中下一个 key 的值写回 provider 正在读取的
 `apiKeyEnv` 凭证引用。DSH 的 LLM 适配器每次请求都会重新解析凭证，所以重试会立即用上新 key。
 
@@ -28,6 +31,11 @@
 并发安全：同一进程内对同一 provider 的切换串行化，并在提交前重新检查 `apiKeyEnv`
 是否已被其他会话切换，避免两个会话同时失败时跳过池中的一个 key。
 
+可选地，插件配置里的 `defaultModel` 会在启动后把 DSH 的默认 provider/model 设为指定值
+（通过 DSH 自带的 `agent-default-model` 服务写入 profile patch，与模型选择器的保存路径相同）。
+它只影响之后新建的会话，不改变已有会话的选择；未配置时完全不碰 DSH 默认模型。见下文
+"默认 provider 模型"一节。
+
 ---
 
 ## 适用范围
@@ -46,7 +54,9 @@
   如确需处理可在 `rotateOnCodes` 中显式加入；
 - 多个 DSH 进程同时运行、且共享同一个 credentials 文件时的跨进程轮转原子性
   （写入本身有跨进程锁，但"读当前值 → 选下一个 → 写回"不是跨进程事务）；
-- `headless` profile：它禁用了交互式凭证服务，插件会保持未激活，无法轮转。
+- `headless` profile：它禁用了交互式凭证服务，插件会保持未激活，无法轮转；
+- `defaultModel` 只改 DSH 的全局默认模型；dsh-superagent 的 orchestrator/worker 会话使用
+  dsh-superagent 自己的 executor/eval 角色模型设置，两者互不影响。
 
 ---
 
@@ -119,6 +129,10 @@ chmod 600 ~/.dsh/.credentials.yaml
 ```yaml
 - id: key-pool
   config:
+    # 可选：新会话默认使用 mn-shared1 / DeepSeek V4.1 Flash
+    defaultModel:
+      provider: mn-shared1
+      model: deepseek-v4.1-flash
     pools:
       mn-shared1:
         apiKeyEnv: MN_SHARED1_API_KEY
@@ -134,7 +148,7 @@ chmod 600 ~/.dsh/.credentials.yaml
 ```
 
 > 该 patch 会整体替换 `key-pool` 这一行的 config（bundle 默认是 `pools: {}`），
-> 所以在这里写出全部池即可。
+> 所以在这里写出全部池即可。`defaultModel` 可省略；省略时插件不碰 DSH 默认模型。
 
 ### 5. 重启一次
 
@@ -159,7 +173,8 @@ dsh --profile superagent --dump-config | grep -A3 key-pool
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `enabled` | `true` | `false` 时插件加载但不注册任何监听器。 |
+| `enabled` | `true` | `false` 时插件加载但不注册任何监听器，也不应用默认模型。 |
+| `defaultModel` | 无 | 可选；新会话默认 provider/model，见下。 |
 | `pools` | `{}` | provider 路由名 → key 池配置。空对象表示全部休眠。 |
 | `rotateOnCodes` | 见下 | 触发切换的失败码；可被每个池覆盖。 |
 | `retryDelayMs` | `500` | 切换后重试前的等待；可被每个池覆盖。 |
@@ -176,6 +191,14 @@ dsh --profile superagent --dump-config | grep -A3 key-pool
 | `maxRotationsPerStep` | 否 | `max(1, keys.length - 1)` | 同一个失败步骤最多切换几次；到上限后交回原重试策略。 |
 | `retryDelayMs` | 否 | 顶层值 | 切换后重试前的等待毫秒数；provider 返回的 `Retry-After` 优先（上限 300 秒）。 |
 
+### defaultModel
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `provider` | 是 | 新会话默认的 provider 路由名；建议与某个 pool 的 provider 一致（不一致时插件会警告该 provider 的额度失败不会轮转 key）。 |
+| `model` | 是 | provider 的模型 id。 |
+| `reasoningEffort` | 否 | 可选的推理档位 id，需被该模型支持。 |
+
 所有字段都做启动时校验：引用名不合法、`keys` 为空、重复引用、未知字段等都会让
 插件加载失败并给出明确路径，而不是静默失效。
 
@@ -187,6 +210,44 @@ dsh --profile superagent --dump-config | grep -A3 key-pool
 - 当前 `apiKeyEnv` 为空（`MISSING_CREDENTIAL`）时，从池中第一个有值的 key 开始；
 - 当前值不在池中（例如手工换过 key）时，从池首开始尝试；
 - 池中没有任何可用替代 key 时，不切换，直接交回原策略。
+
+---
+
+## 默认 provider 模型（可选）
+
+`defaultModel` 让插件成为"新会话默认用哪个 provider/model"的声明式配置，例如当前继续沿用
+DeepSeek V4.1 Flash：
+
+```yaml
+- id: key-pool
+  config:
+    defaultModel:
+      provider: mn-shared1
+      model: deepseek-v4.1-flash
+      # reasoningEffort: high   # 可选
+    pools:
+      mn-shared1:
+        apiKeyEnv: MN_SHARED1_API_KEY
+        keys: [MN_SHARED1_API_KEY, MN_SHARED1_API_KEY_2]
+```
+
+行为：
+
+- 插件启动并完成加载后，把配置的选择与 DSH 当前默认值比较；不同时先通过实时 LLM 路由
+  校验 `provider/model`（不存在或不可用则只记录 warning，不改默认），再调用 DSH 的
+  `agentDefaultModel.saveSelection()` 保存。
+- 保存使用 DSH 自己的配置编辑器：在 profile 的 `cordis.patch.yml` 写入/更新一条
+  `id: agent-default-model` 的 override，并立即生效。这和你用模型选择器把某个模型设为
+  默认走的是同一条路径。
+- 只影响**之后新建**的会话；已存在会话保留自己的选择。
+- 如果 profile 的 home patch 或 `--patch` 覆盖了 `agent-default-model` 行，配置编辑器会拒绝
+  写入，插件记录 warning，DSH 默认保持不变。
+- 只要 `defaultModel` 仍然配置着，每次启动都会把它同步为默认；之后若通过 GUI 改了默认
+  模型，下次启动会被插件配置覆盖。想以 GUI 或其它配置为准时，删掉插件配置里的
+  `defaultModel`（已写入 profile 的 override 可一并删除）。
+- dsh-superagent 的 orchestrator/worker 会话用的是 dsh-superagent 设置里的 executor/eval
+  角色模型，不受这里影响；本机当前已是 `mn-shared1` / `deepseek-v4.1-flash`，所以配置
+  此项不会改变机器人会话使用的模型。
 
 ---
 
@@ -212,15 +273,16 @@ node test/e2e/sdk-e2e.mjs
 
 - mock provider 收到的请求顺序是 `key #1 -> key #2`；
 - 凭证存储中的 `POOL_ACTIVE` 已被改写成 key #2；
-- 重试后的请求产生了 assistant 消息。
+- 重试后的请求产生了 assistant 消息；
+- profile patch 中写入了 `agent-default-model` override（`defaultModel` 生效）。
 
 ### 目录结构
 
 | 路径 | 作用 |
 |---|---|
-| `src/config.js` | 配置校验、默认值、按 provider 归一化。 |
+| `src/config.js` | 配置校验、默认值、按 provider 归一化，含可选的 `defaultModel`。 |
 | `src/rotation.js` | 轮转算法、per-provider 串行队列、每步骤轮转预算。 |
-| `src/index.js` | 插件入口：`agent/request-error` 监听、切换、重试决策。 |
+| `src/index.js` | 插件入口：`agent/request-error` 监听、切换、重试决策，以及默认模型应用。 |
 | `cordis.patch.yml` | bundle patch：插入 `key-pool` 行。 |
 | `test/` | 单元测试、真实 Cordis 测试、SDK 端到端脚本。 |
 

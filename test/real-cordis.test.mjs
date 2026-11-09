@@ -6,13 +6,13 @@ import { pathToFileURL } from 'node:url'
 import * as keyPool from '../src/index.js'
 
 // This optional check exercises the real Cordis runtime (fiber lifecycle,
-// service injection, waterfall dispatch) when a DSH installation is available.
-// The dependency-free suite already covers the rotation logic and the plugin's
-// listener contract, so this test skips on a bare checkout.
+// service injection, waterfall dispatch, effects) when a DSH installation is
+// available. The dependency-free suite already covers the rotation logic and
+// the plugin's listener contract, so this test skips on a bare checkout.
 const dshRoot = process.env.DSH_PACKAGE_ROOT
 
 test(
-  'the plugin activates on a real Cordis context and disposes its listener',
+  'the plugin activates on a real Cordis context, applies the default model, and disposes',
   { skip: dshRoot === undefined ? 'set DSH_PACKAGE_ROOT to the @deepseek-ai/dsh package directory' : false },
   async () => {
     const cordis = await import(
@@ -42,12 +42,53 @@ test(
       }
     }
 
+    class TestDefaultModel extends Service {
+      constructor(ctx) {
+        super(ctx, 'agentDefaultModel')
+        this.saved = []
+      }
+
+      currentSelection() {
+        return { provider: 'deepseek-official', model: 'deepseek-flash' }
+      }
+
+      async saveSelection(selection) {
+        this.saved.push(selection)
+      }
+    }
+
+    class TestConfigEditor extends Service {
+      constructor(ctx) {
+        super(ctx, 'configEditor')
+      }
+
+      async edit() {
+        throw new Error('the real editor is not used by this test')
+      }
+    }
+
+    class TestLlm extends Service {
+      constructor(ctx) {
+        super(ctx, 'llm')
+        this.validated = []
+      }
+
+      async resolveCallConfig(selection) {
+        this.validated.push(selection)
+        return selection
+      }
+    }
+
     const root = new Context()
     try {
       await root.plugin(TestCredentials)
+      await root.plugin(TestDefaultModel)
+      await root.plugin(TestConfigEditor)
+      await root.plugin(TestLlm)
       await root.plugin(keyPool, {
+        defaultModel: { provider: 'mn-shared1', model: 'deepseek-v4.1-flash' },
         pools: {
-          p: {
+          'mn-shared1': {
             apiKeyEnv: 'ACTIVE',
             keys: ['KEY_1', 'KEY_2'],
             retryDelayMs: 0,
@@ -55,12 +96,17 @@ test(
         },
       })
 
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      assert.deepEqual(root.agentDefaultModel.saved, [
+        { provider: 'mn-shared1', model: 'deepseek-v4.1-flash' },
+      ])
+
       const agent = { id: 'agent-1' }
       const payload = {
         agent,
         turn: 1,
         step: 1,
-        provider: 'p',
+        provider: 'mn-shared1',
         failure: { code: 'QUOTA', message: 'quota exhausted' },
         signal: new AbortController().signal,
       }

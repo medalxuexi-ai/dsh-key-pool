@@ -25,7 +25,8 @@ export const DEFAULT_RETRY_DELAY_MS = 500
 /** Upper bound accepted for a configured pause; longer explicit provider delays are capped too. */
 export const MAX_RETRY_DELAY_MS = 300_000
 
-const CONFIG_KEYS = new Set(['enabled', 'pools', 'rotateOnCodes', 'retryDelayMs'])
+const CONFIG_KEYS = new Set(['enabled', 'defaultModel', 'pools', 'rotateOnCodes', 'retryDelayMs'])
+const DEFAULT_MODEL_KEYS = new Set(['provider', 'model', 'reasoningEffort'])
 const POOL_KEYS = new Set([
   'apiKeyEnv',
   'keys',
@@ -69,6 +70,33 @@ function readCodeList(value, path) {
     if (!codes.includes(code)) codes.push(code)
   }
   return codes
+}
+
+/** Validate one non-empty string setting. */
+function readNonEmptyString(value, path) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    fail(`${path} must be a non-empty string`)
+  }
+  return value
+}
+
+/** Validate the optional default provider/model selection applied to new sessions. */
+function readDefaultModel(raw) {
+  if (!isMapping(raw)) fail('defaultModel must be a mapping')
+  for (const key of Object.keys(raw)) {
+    if (!DEFAULT_MODEL_KEYS.has(key)) fail(`defaultModel has unknown key "${key}"`)
+  }
+  const provider = readNonEmptyString(raw.provider, 'defaultModel.provider')
+  const model = readNonEmptyString(raw.model, 'defaultModel.model')
+  const reasoningEffort =
+    raw.reasoningEffort === undefined
+      ? undefined
+      : readNonEmptyString(raw.reasoningEffort, 'defaultModel.reasoningEffort')
+  return Object.freeze({
+    provider,
+    model,
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  })
 }
 
 /** Validate one integer setting. */
@@ -148,6 +176,8 @@ export function normalizeConfig(raw) {
   const enabled = value.enabled === undefined ? true : value.enabled
   if (typeof enabled !== 'boolean') fail('enabled must be a boolean')
 
+  const defaultModel = value.defaultModel === undefined ? undefined : readDefaultModel(value.defaultModel)
+
   const rotateOnCodes =
     value.rotateOnCodes === undefined
       ? [...DEFAULT_ROTATE_ON_CODES]
@@ -171,6 +201,7 @@ export function normalizeConfig(raw) {
 
   return Object.freeze({
     enabled,
+    defaultModel,
     rotateOnCodes: new Set(rotateOnCodes),
     retryDelayMs,
     pools,
