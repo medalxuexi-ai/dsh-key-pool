@@ -242,6 +242,15 @@ DeepSeek V4.1 Flash：
 - 只影响**之后新建**的会话；已存在会话保留自己的选择。
 - 如果 profile 的 home patch 或 `--patch` 覆盖了 `agent-default-model` 行，配置编辑器会拒绝
   写入，插件记录 warning，DSH 默认保持不变。
+- 插件若是在运行中的 profile 里通过 HMR 新装/重载的，激活事务内不能再嵌套写配置；此时插件
+  记录一条 info，把默认模型留到下次启动生效。想立即生效，可直接在 profile 的
+  `cordis.patch.yml` 声明：
+  ```yaml
+  - id: agent-default-model
+    config:
+      provider: mn-shared1
+      model: deepseek-v4.1-flash
+  ```
 - 只要 `defaultModel` 仍然配置着，每次启动都会把它同步为默认；之后若通过 GUI 改了默认
   模型，下次启动会被插件配置覆盖。想以 GUI 或其它配置为准时，删掉插件配置里的
   `defaultModel`（已写入 profile 的 override 可一并删除）。

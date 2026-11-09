@@ -79,7 +79,7 @@ function context(creds, services = {}) {
   return ctx
 }
 
-function defaultModelServices({ current, saveFails = false, resolveFails = false } = {}) {
+function defaultModelServices({ current, saveFails = false, resolveFails = false, saveErrors = [] } = {}) {
   const saved = []
   const resolved = []
   return {
@@ -91,6 +91,8 @@ function defaultModelServices({ current, saveFails = false, resolveFails = false
           return current
         },
         async saveSelection(selection) {
+          const nextError = saveErrors.shift()
+          if (nextError !== undefined) throw new Error(nextError)
           if (saveFails) throw new Error('save failed')
           saved.push(selection)
         },
@@ -280,6 +282,16 @@ test('a disabled config installs no listener', () => {
   assert.equal(ctx.listenerCount('agent/request-error'), 0)
 })
 
+test('activation reports the configured provider pools', () => {
+  const ctx = context(credentials({}))
+  apply(ctx, poolConfig())
+  assert.ok(
+    ctx.logs.some(
+      ([level, message]) => level === 'info' && /active for provider pool\(s\): mn-shared1/.test(message),
+    ),
+  )
+})
+
 test('an empty pool config installs a listener that always delegates', async () => {
   const creds = credentials({})
   const ctx = context(creds)
@@ -408,4 +420,27 @@ test('a disabled config schedules no default model work', async () => {
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(saved.length, 0)
   assert.equal(ctx.listenerCount('agent/request-error'), 0)
+})
+
+test('an HMR-conflicted default-model write is reported as a next-start application', async () => {
+  const { services, saved } = defaultModelServices({
+    current: { provider: 'old', model: 'old-model' },
+    saveErrors: ['HMR transactions cannot be nested'],
+  })
+  const ctx = context(credentials({}), services)
+  apply(ctx, {
+    pools: {},
+    defaultModel: { provider: 'mn-shared1', model: 'deepseek-v4.1-flash' },
+  })
+
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  assert.equal(saved.length, 0)
+  assert.ok(
+    ctx.logs.some(
+      ([level, message]) =>
+        level === 'info' && /hot-reloading.*next start/.test(message),
+    ),
+    'the nested HMR write should be explained instead of retried',
+  )
 })

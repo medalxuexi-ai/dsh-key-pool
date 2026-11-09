@@ -44,6 +44,9 @@ export function apply(ctx, rawConfig) {
 
   const state = createRotationState()
   ctx.on('agent/request-error', (payload, next) => recover(ctx, config, state, payload, next))
+  if (config.pools.size > 0) {
+    log(ctx, 'info', `key-pool: active for provider pool(s): ${[...config.pools.keys()].sort().join(', ')}`)
+  }
 
   if (config.defaultModel === undefined) return
   if (!config.pools.has(config.defaultModel.provider)) {
@@ -59,7 +62,15 @@ export function apply(ctx, rawConfig) {
       // awaits the loader, which must not be re-entered from our own apply().
       const timer = setTimeout(() => {
         void applyDefaultModel(child, config.defaultModel).catch((error) => {
-          log(ctx, 'warn', `key-pool: could not apply the configured default model: ${messageOf(error)}`)
+          if (isNestedHmrError(error)) {
+            log(
+              ctx,
+              'info',
+              'key-pool: the profile is hot-reloading, so the configured default model will apply on the next start; declare an agent-default-model row to apply it now',
+            )
+          } else {
+            log(ctx, 'warn', `key-pool: could not apply the configured default model: ${messageOf(error)}`)
+          }
         })
       }, 0)
       return () => clearTimeout(timer)
@@ -114,6 +125,11 @@ export async function applyDefaultModel(ctx, target) {
     `key-pool: DSH default model for new sessions is now provider "${target.provider}" / model "${target.model}"`,
   )
   return { applied: true }
+}
+
+/** Recognize the HMR queue's nested-transaction rejection. */
+function isNestedHmrError(error) {
+  return error instanceof Error && /HMR transactions cannot be nested/i.test(error.message)
 }
 
 /** Compare two agent default selections, treating an absent effort as absent. */
