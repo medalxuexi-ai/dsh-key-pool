@@ -1,0 +1,16 @@
+# Pools for the two provider routes already configured in this machine's
+# superagent profile. Merge this row into ~/.dsh/profiles/superagent/cordis.patch.yml.
+- id: key-pool
+  config:
+    pools:
+      mn-shared1:
+        apiKeyEnv: MN_SHARED1_API_KEY
+        keys:
+          - MN_SHARED1_API_KEY
+          - MN_SHARED1_API_KEY_2
+          - MN_SHARED1_API_KEY_3
+      mn-djx:
+        apiKeyEnv: MN_DJX_API_KEY
+        keys:
+          - MN_DJX_API_KEY
+          - MN_DJX_API_KEY_2

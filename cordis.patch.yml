@@ -1,0 +1,17 @@
+# The dsh-key-pool bundle patch: insert the plugin row over the profile root.
+# A profile configures it by id in its own cordis.patch.yml:
+#
+#   - id: key-pool
+#     config:
+#       pools: { ... }
+#
+# Install this package as a profile dependency and list "dsh-key-pool" in
+# package.json -> dsh.profile.bundles. See README.md for the full setup.
+
+- insert:
+    - id: key-pool
+      name: dsh-key-pool
+      config:
+        # Dormant until the profile supplies pools; the plugin loads, registers
+        # its request-error listener, and does nothing.
+        pools: {}

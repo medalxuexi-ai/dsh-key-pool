@@ -1,0 +1,32 @@
+{
+  "name": "dsh-key-pool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH plugin: rotate a provider's API key through a configured key pool when the active key runs out of quota",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "examples",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=22.19.0",
+    "dsh": "^0.2.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js test/*.test.mjs",
+    "test:e2e": "node test/e2e/sdk-e2e.mjs"
+  },
+  "license": "MIT"
+}
