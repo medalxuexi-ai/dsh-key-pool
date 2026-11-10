@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "description": "DSH plugin: rotate a provider's API key through a configured key pool when the active key runs out of quota, and optionally pin the default provider/model for new sessions",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/medalxuexi-ai/dsh-key-pool.git"
+  },
+  "homepage": "https://github.com/medalxuexi-ai/dsh-key-pool#readme",
+  "bugs": {
+    "url": "https://github.com/medalxuexi-ai/dsh-key-pool/issues"
+  },
   "type": "module",
   "main": "src/index.js",
   "exports": {

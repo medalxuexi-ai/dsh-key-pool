@@ -66,17 +66,24 @@
 
 ### 1. 把插件安装为 profile 依赖
 
+先把仓库克隆到本机（路径可自定）：
+
+```sh
+git clone https://github.com/medalxuexi-ai/dsh-key-pool.git ~/src/dsh-key-pool
+```
+
+然后用 `pnpm` 安装到 profile：
+
 ```sh
 cd ~/.dsh/profiles/superagent
-pnpm add /Users/dingjianxun/src/dsh-demo/dsh-key-pool
+pnpm add ~/src/dsh-key-pool
 ```
 
 没有 pnpm 时，也可以手工建立链接（效果相同）：
 
 ```sh
 mkdir -p ~/.dsh/profiles/superagent/node_modules
-ln -sfn /Users/dingjianxun/src/dsh-demo/dsh-key-pool \
-  ~/.dsh/profiles/superagent/node_modules/dsh-key-pool
+ln -sfn ~/src/dsh-key-pool ~/.dsh/profiles/superagent/node_modules/dsh-key-pool
 ```
 
 ### 2. 在 profile manifest 中启用 bundle
@@ -262,11 +269,9 @@ DeepSeek V4.1 Flash：
 
 ## 开发与验证
 
-插件是零依赖的纯 ESM，无需构建。
+插件是零依赖的纯 ESM，无需构建。以下命令在仓库根目录执行。
 
 ```sh
-cd dsh-key-pool
-
 # 单元测试（不依赖 DSH 安装）
 node --test test/*.test.js
 
